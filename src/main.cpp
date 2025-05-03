@@ -1,6 +1,14 @@
 #define GLM_FORCE_SWIZZLE
 #define GLM_ENABLE_EXPERIMENTAL
 
+#include <chrono>
+#include <cstdlib>
+#include <random>
+#include <vector>
+
+#include <glm/geometric.hpp>
+#include <glm/fwd.hpp>
+
 #include "AssetManager.hpp"
 #include "Color.hpp"
 #include "DeferredRenderer.hpp"
@@ -24,18 +32,15 @@
 #include "engine/Transform.hpp"
 #include "engine/Velocity.hpp"
 #include "state.hpp"
-#include <chrono>
-#include <cstdlib>
-#include <glm/fwd.hpp>
-#include <glm/geometric.hpp>
-#include <random>
-#include <vector>
+
 
 using namespace cevy;
 using namespace ecs;
 using namespace engine;
 
 const float base_mass = 20;
+
+struct Focus {};
 
 struct Particle {
   Time::time_point spawn_point;
@@ -65,15 +70,17 @@ static glm::vec3 hsv2rgb(glm::vec3 c) {
 void initial_setup(Resource<asset::AssetManager> asset_manager, Commands cmd,
                    Resource<physics::Gravity> gravity, Resource<Atmosphere> atmosphere) {
   // gravity->acceleration *= 10;
-  asset_manager->add(primitives::sphere(1, 8, 4), "sphere.mesh");
+  auto plane_mesh = asset_manager->add(primitives::plane(200, 4, 4), "plane.mesh");
+  asset_manager->add(primitives::sphere(2, 6, 3), "sphere.mesh");
   auto mat = asset_manager->add(PbrMaterial(), "default.material");
 
-  atmosphere->ambiant = {atmosphere->ambiant.r * 2, atmosphere->ambiant.g * 2,
-                         atmosphere->ambiant.b * 2};
-  atmosphere->fog = {atmosphere->fog.r * 2, atmosphere->fog.g * 2, atmosphere->fog.b * 2};
+  auto dark_mat = Handle<PbrMaterial>::Clone(mat);
+  dark_mat->diffuse = {0, 0, 0};
+  cmd.spawn(Transform(), plane_mesh, dark_mat);
+  auto focus = cmd.spawn(Transform(), Focus{});
 
   auto _camera =
-      cmd.spawn(Camera(), Transform(glm::vec3(0, -100, 50), glm::quat({glm::radians(90.f), 0, 0}),
+      cmd.spawn(Parent{focus.id()}, Camera(), Transform(glm::vec3(0, -100, 50), glm::quat({glm::radians(90.f), 0, 0}),
                                     glm::vec3(1)));
 
   // auto plane_handle = asset_manager->add(primitives::plane(256, 16, 16), "plane.mesh");
@@ -87,6 +94,7 @@ void initial_setup(Resource<asset::AssetManager> asset_manager, Commands cmd,
 }
 
 void firework_emitter(Commands cmd, Query<const Camera, const Transform> camera,
+                      Query<const Focus, const Transform> hit_plane,
                       Resource<Time> time, Resource<asset::AssetManager> asset_manager,
                       Resource<input::ButtonInput<input::MouseButton>> mouse_buttons,
                       cevy::ecs::Resource<cevy::input::cursorPosition> cursorPosition,
@@ -99,15 +107,17 @@ void firework_emitter(Commands cmd, Query<const Camera, const Transform> camera,
     return;
   }
   auto o_camera = camera.get_single();
+  auto o_plane = hit_plane.get_single();
 
-  if (mouse_buttons->is_just_pressed(input::MouseButton::Left) && o_camera) {
+  if (mouse_buttons->is_just_pressed(input::MouseButton::Left) && o_camera && o_plane) {
     auto [camera, cam_trans] = o_camera.value();
+    auto [_, plane_trans] = o_plane.value();
     auto window_size = window->windowSize();
     glm::vec2 screen_space = {(float(cursorPosition->pos.x) / window_size.x) * 2.f - 1.f,
                               ((float(cursorPosition->pos.y) / window_size.y) * -2.f + 1.f) /
                                   window_size.x * window_size.y};
     // screen_space = glm::inverse(camera.projection) * glm::vec4(screen_space, 1, 0);
-    glm::mat4 cam_tm = glm::mat4(cam_trans);
+    glm::mat4 cam_tm = glm::mat4(cam_trans.get_world());
     cam_tm /= cam_tm[3][3];
     auto origin = cam_tm * glm::vec4(0, 0, 0, 1);
     auto direction = glm::inverse(camera.projection) * glm::vec4(screen_space, 1, 1);
@@ -115,7 +125,7 @@ void firework_emitter(Commands cmd, Query<const Camera, const Transform> camera,
     origin /= origin.w;
     auto ray = physics::Ray{origin, glm::normalize(direction.xyz())};
 
-    auto collision = collider.raycast(glm::mat4(1), ray);
+    auto collision = collider.raycast(plane_trans, ray);
 
     if (!collision.hit) {
       std::cout << "NO HIT" << std::endl;
@@ -129,11 +139,12 @@ void firework_emitter(Commands cmd, Query<const Camera, const Transform> camera,
     auto g = 9.81;
     auto z_vel = std::sqrt(2 * h * g);
     auto time_to_h = z_vel / g / 1.5;
-    glm::vec3 velocity = {distance.x / time_to_h / 2, 0, z_vel};
 
+    glm::vec3 velocity = {distance.x / time_to_h / 2, distance.y / time_to_h / 2, z_vel};
+    glm::vec3 spawn_point = {distance.x / 2, distance.y / 2, 0};
     Time::time_point lifetime = time->now();
-    auto color = glm::vec3((random() & 65535) / 65536.f, (random() & 65535) / 65536.f,
-                           (random() & 65535) / 65536.f);
+    auto color = glm::vec3((std::rand() & 65535) / 65536.f, (std::rand() & 65535) / 65536.f,
+                           (std::rand() & 65535) / 65536.f);
     color /= std::min({color.x, color.y, color.z});
     lifetime += Time::duration(time_to_h);
     // cmd.spawn(
@@ -156,7 +167,7 @@ void firework_emitter(Commands cmd, Query<const Camera, const Transform> camera,
     cmd.spawn(
         Particle{time->now(), lifetime}, cevy::physics::RigidBody(base_mass),
         // physics::Collider(0, physics::Shape::Sphere({}, 1)),
-        Transform({collision.location.x / 2, 0, 0}, glm::quat({0, 0, 0}), glm::vec3(1)),
+        Transform(spawn_point, glm::quat({0, 0, 0}), glm::vec3(1)),
         TransformVelocity(velocity), asset_manager->get<Mesh>("sphere.mesh").value(),
         // Handle<Mesh>::Clone(asset_manager->get<Mesh>("sphere.mesh").value()),
         Handle<PbrMaterial>::Clone(asset_manager->get<PbrMaterial>("default.material").value()),
@@ -308,7 +319,7 @@ void catchall(Resource<Time> time, Commands cmd,
 }
 
 void move_camera(Resource<input::ButtonInput<input::KeyCode>> keyboard,
-                 Query<Camera, Transform> cam_q, Resource<ecs::Time> time) {
+                 Query<Focus, Transform> cam_q, Resource<ecs::Time> time) {
   glm::vec3 direction = {0, 0, 0};
   float speed = 10;
 
@@ -339,7 +350,9 @@ void move_camera(Resource<input::ButtonInput<input::KeyCode>> keyboard,
   }
 }
 
-void rotate_camera(Query<Camera, Transform> cam_q,
+void rotate_camera(
+                   Query<Focus, Transform> table_q,
+                   Query<Camera, Transform> cam_q,
                    Resource<input::ButtonInput<input::MouseButton>> mouse_buttons,
                    cevy::ecs::EventReader<input::mouseMotion> mouse_motion_reader) {
   static glm::vec2 rotation = {0 * glm::pi<float>(), glm::pi<float>() * 0.3f};
@@ -359,7 +372,10 @@ void rotate_camera(Query<Camera, Transform> cam_q,
       auto xQuat = glm::quat({0., 0., rotation.x});
       auto yQuat = glm::quat({rotation.y, 0., 0.});
       for (auto [_, transform] : cam_q) {
-        transform.rotation = xQuat * yQuat;
+        transform.rotation = yQuat;
+      }
+      for (auto [_, transform] : table_q) {
+        transform.rotation = xQuat;
       }
     }
   }
@@ -367,6 +383,7 @@ void rotate_camera(Query<Camera, Transform> cam_q,
 
 int main() {
   App app;
+  app.init_component<Focus>();
   app.init_component<Particle>();
   app.init_component<Fireburst>();
   app.init_component<Sparkler>();
