@@ -210,7 +210,7 @@ void firework_exploder(Resource<Time> time,
                     Handle<PbrMaterial>::Clone(mat), Fireburst{color, fw.base_size, fw.recursions});
         }
 
-        for (uint i = 0; i < fragments; ++i) {
+        for (uint32_t i = 0; i < fragments; ++i) {
           float velocity = tm.position.z * (d(gen) + 100.f) / 20;
           glm::vec3 direction = glm::normalize(glm::vec3(d(gen), d(gen), d(gen)));
           direction *= velocity;
@@ -286,7 +286,7 @@ void firework_trailer(
     Query<Transform, Particle, Fireburst, Handle<PbrMaterial>, Handle<Mesh>> fireworks,
     Query<Entity, Particle, Trail> trails) {
   for (auto [tm, p, fw, mat, mesh] : fireworks) {
-    if ((random() & 665535) * time->delta_seconds() > 2048.f / (fw.recursions)) {
+    if ((std::rand() & 665535) * time->delta_seconds() > 2048.f / (fw.recursions)) {
       auto lifetime = (p.lifetime - time->now()) * 0.5 + time->now();
       std::cout << "TRAILED" << std::endl;
       auto transform = tm;
