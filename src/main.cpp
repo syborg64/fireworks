@@ -12,6 +12,7 @@
 #include "AssetManager.hpp"
 #include "Color.hpp"
 #include "DeferredRenderer.hpp"
+#include "ForwardRenderer.hpp"
 #include "Editor.hpp"
 #include "Mesh.hpp"
 #include "PbrMaterial.hpp"
@@ -171,7 +172,7 @@ void firework_emitter(Commands cmd, Query<const Camera, const Transform> camera,
         TransformVelocity(velocity), asset_manager->get<Mesh>("sphere.mesh").value(),
         // Handle<Mesh>::Clone(asset_manager->get<Mesh>("sphere.mesh").value()),
         Handle<PbrMaterial>::Clone(asset_manager->get<PbrMaterial>("default.material").value()),
-        Fireburst{color, 1, 1}, Sparkler{color, 0.2, 2});
+        Fireburst{color, 1, 1}, Sparkler{color, 0.2, 0.5});
   }
 }
 
@@ -196,12 +197,11 @@ void firework_exploder(Resource<Time> time,
 
     if (explode) {
       cmd.despawn(en);
-      const auto fragments = 100;
+      const auto fragments = 40;
       if (fw.recursions > 0) {
         if (d(gen) > 0) {
           std::cout << "doubling" << std::endl;
           glm::vec3 color = {fw.color.y, fw.color.z, fw.color.x};
-          color *= color;
           auto ext = d(gen) * 0.25 + 0.5;
           cmd.spawn(Particle{p.spawn_point, time->now() + Time::duration(ext)},
                     cevy::physics::RigidBody(base_mass),
@@ -224,7 +224,7 @@ void firework_exploder(Resource<Time> time,
                         Fireburst{fw.color, fw.base_size / std::pow(float(fragments), 1.f / 3.f),
                                   fw.recursions - 1});
           if ((gen() - gen.min()) / double(gen.max() - gen.min()) < 3. / fragments) {
-            ent.insert(Sparkler{fw.color, fw.base_size / std::pow(float(fragments), 1.f / 3.f), 0.5});
+            ent.insert(Sparkler{fw.color, fw.base_size / std::pow(float(fragments), 1.f / 3.f), 0.01});
             ent.insert(TransformVelocity(direction + glm::vec3{0, 0, 9.81}));
           }
         }
@@ -389,7 +389,9 @@ int main() {
   app.init_component<Sparkler>();
   app.init_component<Trail>();
   app.add_plugins(
-      Engine<glWindow::Builder<cevy::engine::DeferredRenderer /* , editor::Editor */>>());
+      Engine<glWindow::Builder<cevy::engine::ForwardRenderer>>());
+      // Engine<glWindow::Builder<cevy::engine::DeferredRenderer>>());
+      // Engine<glWindow::Builder<cevy::engine::DeferredRenderer, editor::Editor>>());
   app.add_plugins(physics::PhysicsPlugin());
   app.add_systems<core_stage::Startup>(initial_setup);
   app.add_systems<core_stage::Update>(rotate_camera);
